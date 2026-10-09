@@ -283,22 +283,84 @@ func main() {
 	// }
 	// 5.3 Step C — wait group
 
-	resultChan := make(chan OrderResult, 3)
-	var wg sync.WaitGroup // Initialize the WaitGroup
+	// resultChan := make(chan OrderResult, 3)
+	// var wg sync.WaitGroup // Initialize the WaitGroup
 
-	// We have 3 orders, so add 3 to the WaitGroup counter
-	wg.Add(3)
+	// We have 1 order, so add 1 to the WaitGroup counter
+	// wg.Add(3)
 	// 1. Thông báo worker đang chạy (đặt ngay sau khi khởi chạy các goroutine)
-	fmt.Println("workers are running...")
+	// fmt.Println("workers are running...")
 	// Pass the memory address of wg (&wg) to each worker
 	// go prepareOrder("101", 500*time.Millisecond, resultChan, &wg)
 	// go prepareOrder("102", 200*time.Millisecond, resultChan, &wg)
 	// go prepareOrder("103", 300*time.Millisecond, resultChan, &wg)
 	// Assuming myOrder is already created
-	go prepareOrder(myOrder, 500*time.Millisecond, resultChan, &wg)
 	// 2. Thông báo tất cả worker đã hoàn thành (vòng lặp channel đã kết thúc)
 
 	// Wait for all workers to finish in the background, then close the channel
+
+	// 5.4
+
+	inventory := setupInventory()
+	listInventory(inventory)
+	myOrder := Order{
+		OrderID:      "ORD-1001",
+		Items:        make(map[string]int),
+		CustomerType: Member,
+		OrderType:    Delivery,
+	}
+	myOrder2 := Order{
+		OrderID:      "ORD-1002",
+		Items:        make(map[string]int),
+		CustomerType: Member,
+		OrderType:    Delivery,
+	}
+	myOrder3 := Order{
+		OrderID:      "ORD-1003",
+		Items:        make(map[string]int),
+		CustomerType: Member,
+		OrderType:    Delivery,
+	}
+	myOrder4 := Order{
+		OrderID:      "ORD-1004",
+		Items:        make(map[string]int),
+		CustomerType: Member,
+		OrderType:    Delivery,
+	}
+	myOrder5 := Order{
+		OrderID:      "ORD-1005",
+		Items:        make(map[string]int),
+		CustomerType: Member,
+		OrderType:    Delivery,
+	}
+
+	orders := []Order{myOrder, myOrder2, myOrder3, myOrder4, myOrder5}
+	resultChan := make(chan OrderResult, len(orders))
+	var wg sync.WaitGroup // Initialize the WaitGroup
+	sem := make(chan struct{}, 2)
+	wg.Add(len(orders)) // Add the number of orders to the WaitGroup counter
+	// fmt.Println("workers are running...")
+
+	for i, o := range orders {
+		go func(o Order, d time.Duration) {
+			sem <- struct{}{}        // acquire (blocks if 2 already running)
+			defer func() { <-sem }() // release
+			prepareOrder(o, d, resultChan, &wg)
+		}(o, time.Duration(200+i*100)*time.Millisecond)
+	}
+
+	jobs := make(chan Order)
+	for w := 0; w < 2; w++ {
+		go func() {
+			for o := range jobs {
+				prepareOrder(o, 300*time.Millisecond, resultChan, &wg)
+			}
+		}()
+	}
+	for _, o := range orders {
+		jobs <- o
+	}
+	close(jobs)
 	go func() {
 		wg.Wait()
 		close(resultChan)
