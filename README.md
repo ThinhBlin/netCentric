@@ -1,2 +1,2 @@
 # netCentric
-We hate ourself
+Storage for the lab
