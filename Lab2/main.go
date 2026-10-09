@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -198,20 +199,21 @@ func printOrderSummary(order Order, inventory map[string]*FoodItem) {
 // ================Lab2 part====================//
 // NEW: Function to simulate order preparation concurrently
 // UPDATED: Worker function that returns a struct via channel
-func prepareOrder(orderID string, prepTime time.Duration, resultChan chan<- OrderResult) {
-	startTime := time.Now()
+// 5.2 Step B — Concurrent Order Preparation with Channels
+// func prepareOrder(orderID string, prepTime time.Duration, resultChan chan<- OrderResult) {
+// 	startTime := time.Now()
 
-	// Simulate preparation
-	time.Sleep(prepTime)
+// 	// Simulate preparation
+// 	time.Sleep(prepTime)
 
-	// Calculate exact time and send the result
-	elapsed := time.Since(startTime)
-	resultChan <- OrderResult{
-		OrderID:  orderID,
-		Status:   "READY",
-		PrepTime: elapsed,
-	}
-}
+// 	// Calculate exact time and send the result
+// 	elapsed := time.Since(startTime)
+// 	resultChan <- OrderResult{
+// 		OrderID:  orderID,
+// 		Status:   "READY",
+// 		PrepTime: elapsed,
+// 	}
+// }
 
 // Sequential version: No channels, no goroutines
 func prepareOrderSequential(orderID string, prepTime time.Duration) {
@@ -220,66 +222,71 @@ func prepareOrderSequential(orderID string, prepTime time.Duration) {
 	fmt.Printf("Order %s: Preparation completed!\n", orderID)
 }
 
+// 5.3 Step C — wait group
+// UPDATED: Worker function with sync.WaitGroup
+func prepareOrder(orderID string, prepTime time.Duration, resultChan chan<- OrderResult, wg *sync.WaitGroup) {
+	defer wg.Done() // Signal that this goroutine is complete before exiting
+
+	startTime := time.Now()
+	time.Sleep(prepTime)
+
+	elapsed := time.Since(startTime)
+	resultChan <- OrderResult{
+		OrderID:  orderID,
+		Status:   "READY",
+		PrepTime: elapsed,
+	}
+}
+
 func main() {
-	// // Initialize store
-	// inventory := setupInventory()
-
-	// fmt.Println("--- WELCOME TO THE CAMPUS FOOD SHOP ---")
-	// listInventory(inventory)
-
-	// fmt.Println("\n--- TESTING SEARCH ---")
-	// searchFood(inventory, "ITEM-1")
-	// searchFood(inventory, "ITEM-99") // Doesn't exist
-
-	// fmt.Println("\n--- TESTING ADD TO ORDER ---")
-	// myOrder := Order{
-	// 	OrderID:      "ORD-1001",
-	// 	Items:        make(map[string]int),
-	// 	CustomerType: Member,
-	// 	OrderType:    Delivery,
-	// }
-
-	// // Test 1: Normal valid order
-	// if err := addItemToOrder(&myOrder, inventory, "ITEM-1", 2); err != nil {
-	// 	fmt.Println("Error:", err)
-	// }
-
-	// // Test 2: Reject invalid quantity (restored feature)
-	// if err := addItemToOrder(&myOrder, inventory, "ITEM-2", -3); err != nil {
-	// 	fmt.Println("Error:", err)
-	// }
-
-	// // Test 3: Reject unavailable/out-of-stock (restored feature)
-	// if err := addItemToOrder(&myOrder, inventory, "ITEM-6", 1); err != nil {
-	// 	fmt.Println("Error:", err)
-	// }
-
-	// printOrderSummary(myOrder, inventory)
-	// Create a channel to listen for completed order IDs
-	//========================================================================
 	//==================LAB2=======================//
 
 	// 5.1 Step A — Concurrent Order Preparation 5.1.1
 	// doneChan := make(chan string, 3)
 
 	// // Run three orders sequentially (one after the other)
-	// // 5.1.2 Step B — Sequential Order Preparation
+	// // 5.2 Step B — Sequential Order Preparation
 	// prepareOrderSequential("ORD-1001", 3*time.Second) //[cite: 1]
 	// prepareOrderSequential("ORD-1002", 1*time.Second)
 	// prepareOrderSequential("ORD-1003", 2*time.Second)
 	// Create a channel that accepts the new OrderResult struct
-	resultChan := make(chan OrderResult, 3)
+	//5.2 Step B — Concurrent Order Preparation with Channels
+	// resultChan := make(chan OrderResult, 3)
 
-	// Run concurrent orders (using IDs from your example)
-	go prepareOrder("101", 500*time.Millisecond, resultChan)
-	go prepareOrder("102", 200*time.Millisecond, resultChan)
-	go prepareOrder("103", 300*time.Millisecond, resultChan)
+	// // Run concurrent orders (using IDs from your example)
+	// go prepareOrder("101", 500*time.Millisecond, resultChan)
+	// go prepareOrder("102", 200*time.Millisecond, resultChan)
+	// go prepareOrder("103", 300*time.Millisecond, resultChan)
+
+	// fmt.Println("=== Completed Orders ===")
+
+	// // Wait and listen for the results
+	// for i := 0; i < 3; i++ {
+	// 	result := <-resultChan
+	// 	fmt.Printf("Order #%s -- %s -- %v\n", result.OrderID, result.Status, result.PrepTime)
+	// }
+	// 5.3 Step C — wait group
+	resultChan := make(chan OrderResult, 3)
+	var wg sync.WaitGroup // Initialize the WaitGroup
+
+	// We have 3 orders, so add 3 to the WaitGroup counter
+	wg.Add(3)
+
+	// Pass the memory address of wg (&wg) to each worker
+	go prepareOrder("101", 500*time.Millisecond, resultChan, &wg)
+	go prepareOrder("102", 200*time.Millisecond, resultChan, &wg)
+	go prepareOrder("103", 300*time.Millisecond, resultChan, &wg)
+
+	// Wait for all workers to finish in the background, then close the channel
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
 
 	fmt.Println("=== Completed Orders ===")
 
-	// Wait and listen for the results
-	for i := 0; i < 3; i++ {
-		result := <-resultChan
+	// Read continuously until the channel is closed
+	for result := range resultChan {
 		fmt.Printf("Order #%s -- %s -- %v\n", result.OrderID, result.Status, result.PrepTime)
 	}
 
