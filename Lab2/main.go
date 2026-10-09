@@ -1,377 +1,176 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"sort"
 	"sync"
 	"time"
 )
 
-type CustomerType string
-
-const (
-	Regular CustomerType = "Regular"
-	Member  CustomerType = "Member"
-)
-
-type OrderType string
-
-const (
-	Pickup   OrderType = "Pickup"
-	Delivery OrderType = "Delivery"
-)
-
-type FoodItem struct {
-	ID        string
-	Name      string
-	Price     int // Using int for money
-	Category  string
-	StockLeft int
-}
-
+// Order defines the structure for all kitchen orders
 type Order struct {
-	OrderID      string
-	Items        map[string]int
-	CustomerType CustomerType
-	OrderType    OrderType
+	ID       int
+	Items    string
+	Duration time.Duration
+	Priority bool // Used in the ADAPT Phase
 }
 
-// NEW: Struct to hold the result of the preparation
+// OrderResult defines the result sent through the channel back to main
 type OrderResult struct {
-	OrderID  string
+	OrderID  int
 	Status   string
-	PrepTime time.Duration
+	Duration time.Duration
 }
 
-const (
-	memberDiscountPercent = 5
-	deliveryFee           = 30000
-)
-
-// setupInventory keeps main() clean, just like your first script
-func setupInventory() map[string]*FoodItem {
-	return map[string]*FoodItem{
-		"ITEM-1": {ID: "ITEM-1", Name: "Pho", Price: 50000, Category: "Main Dish", StockLeft: 10},
-		"ITEM-2": {ID: "ITEM-2", Name: "Vietnamese Coffee", Price: 25000, Category: "Drink", StockLeft: 5},
-		"ITEM-3": {ID: "ITEM-3", Name: "Banh Mi", Price: 30000, Category: "Main Dish", StockLeft: 8},
-		"ITEM-4": {ID: "ITEM-4", Name: "CheeseBurger", Price: 20000, Category: "Main Dish", StockLeft: 12},
-		"ITEM-5": {ID: "ITEM-5", Name: "Fried Chicken", Price: 40000, Category: "Main Dish", StockLeft: 7},
-		"ITEM-6": {ID: "ITEM-6", Name: "Spring Rolls", Price: 15000, Category: "Appetizer", StockLeft: 0}, // Out of stock
-	}
-}
-
-// searchFood brings back your instant lookup feature
-func searchFood(inventory map[string]*FoodItem, itemID string) {
-	food, exists := inventory[itemID]
-	if !exists {
-		fmt.Printf("Search: '%s' not found in store.\n", itemID)
-	} else {
-		fmt.Printf("Search: Found '%s' (%s) - Price: %d VND, Stock Left: %d\n",
-			food.Name, food.Category, food.Price, food.StockLeft)
-	}
-}
-
-// isValidQuantity prevents negative or zero orders
-func isValidQuantity(quantity int) bool {
-	return quantity > 0
-}
-
-func addItemToOrder(order *Order, inventory map[string]*FoodItem, itemID string, qty int) error {
-	// 1. Check for valid positive quantity (from your first script)
-	if !isValidQuantity(qty) {
-		return fmt.Errorf("cannot order %d. Quantity must be > 0", qty)
-	}
-
-	// 2. Check if item exists
-	food, exists := inventory[itemID]
-	if !exists {
-		return errors.New("item does not exist")
-	}
-
-	// 3. Check stock (replaces your Available boolean)
-	if food.StockLeft < qty {
-		return fmt.Errorf("not enough stock for %s (requested: %d, left: %d)", food.Name, qty, food.StockLeft)
-	}
-
-	// 4. Process order
-	food.StockLeft -= qty
-	order.Items[itemID] += qty
-	return nil
-}
-
-// //=============================CALCULATION FUNCTIONS=============================////
-func calculateSubtotal(order Order, inventory map[string]*FoodItem) int {
-	subtotal := 0
-	for itemID, qty := range order.Items {
-		subtotal += inventory[itemID].Price * qty
-	}
-	return subtotal
-}
-
-// Discount applies to the food subtotal only, never the delivery fee.
-func calculateDiscount(customerType CustomerType, foodSubtotal int) int {
-	if customerType == Member {
-		return foodSubtotal * memberDiscountPercent / 100
-	}
-	return 0
-}
-
-func calculateDeliveryFee(orderType OrderType) int {
-	if orderType == Delivery {
-		return deliveryFee
-	}
-	return 0
-}
-
-// ============================================================================//
-func listInventory(inventory map[string]*FoodItem) {
-	if len(inventory) == 0 {
-		fmt.Println("Inventory is empty.")
-		return
-	}
-
-	keys := make([]string, 0, len(inventory))
-	for k := range inventory {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	fmt.Println("=== Available Menu ===")
-	for _, itemID := range keys {
-		item := inventory[itemID]
-
-		// Only display items that are actually in stock (similar to your Available check)
-		if item.StockLeft > 0 {
-			fmt.Printf("[%s] %-17s | Category: %-9s | Price: %5d VND | Stock: %d\n",
-				itemID, item.Name, item.Category, item.Price, item.StockLeft)
-		}
-	}
-}
-
-// func printOrderSummary(order Order, inventory map[string]*FoodItem) {
-// 	fmt.Printf("\n=== Order Summary (%s) ===\n", order.OrderID)
-
-// 	if len(order.Items) == 0 {
-// 		fmt.Println("Order is empty.")
-// 		return
-// 	}
-
-// 	var grandTotal int = 0
-
-// 	for itemID, qty := range order.Items {
-// 		food := inventory[itemID]
-// 		subtotal := food.Price * qty
-// 		grandTotal += subtotal
-
-// 		fmt.Printf("- %-17s | Qty: %d x %d VND = %d VND\n", food.Name, qty, food.Price, subtotal)
-// 	}
-
-//		fmt.Println("------------------------------------------------")
-//		fmt.Printf("Total Money: %d VND\n\n", grandTotal)
-//	}
-func printOrderSummary(order Order, inventory map[string]*FoodItem) {
-	fmt.Printf("\n=== Order Summary (%s) ===\n", order.OrderID)
-	fmt.Printf("Customer: %s | Order type: %s\n", order.CustomerType, order.OrderType)
-
-	if len(order.Items) == 0 {
-		fmt.Println("Order is empty.")
-		return
-	}
-
-	for itemID, qty := range order.Items {
-		food := inventory[itemID]
-		fmt.Printf("- %-17s | Qty: %d x %d VND = %d VND\n", food.Name, qty, food.Price, food.Price*qty)
-	}
-
-	subtotal := calculateSubtotal(order, inventory)
-	discount := calculateDiscount(order.CustomerType, subtotal)
-	fee := calculateDeliveryFee(order.OrderType)
-	finalTotal := subtotal - discount + fee
-
-	fmt.Println("------------------------------------------------")
-	fmt.Printf("Subtotal:     %d VND\n", subtotal)
-	fmt.Printf("Discount:    -%d VND\n", discount)
-	fmt.Printf("Delivery fee: %d VND\n", fee)
-	fmt.Printf("Final Total:  %d VND\n\n", finalTotal)
-}
-
-// ================Lab2 part====================//
-// NEW: Function to simulate order preparation concurrently
-// UPDATED: Worker function that returns a struct via channel
-// 5.2 Step B — Concurrent Order Preparation with Channels
-// func prepareOrder(orderID string, prepTime time.Duration, resultChan chan<- OrderResult) {
-// 	startTime := time.Now()
-
-// 	// Simulate preparation
-// 	time.Sleep(prepTime)
-
-// 	// Calculate exact time and send the result
-// 	elapsed := time.Since(startTime)
-// 	resultChan <- OrderResult{
-// 		OrderID:  orderID,
-// 		Status:   "READY",
-// 		PrepTime: elapsed,
-// 	}
-// }
-
-// Sequential version: No channels, no goroutines
-func prepareOrderSequential(orderID string, prepTime time.Duration) {
-	fmt.Printf("Order %s: Preparation started...\n", orderID)
-	time.Sleep(prepTime)
-	fmt.Printf("Order %s: Preparation completed!\n", orderID)
-}
-
-// 5.3 Step C — wait group
-// // UPDATED: Worker function with sync.WaitGroup
-// func prepareOrder(orderID string, prepTime time.Duration, resultChan chan<- OrderResult, wg *sync.WaitGroup) {
-// 	defer wg.Done() // Signal that this goroutine is complete before exiting
-
-// 	startTime := time.Now()
-// 	time.Sleep(prepTime)
-
-//		elapsed := time.Since(startTime)
-//		resultChan <- OrderResult{
-//			OrderID:  orderID,
-//			Status:   "READY",
-//			PrepTime: elapsed,
-//		}
-//	}
-//
-// 5.4
-// UPDATED: Worker function now accepts the full Order struct
-func prepareOrder(order Order, prepTime time.Duration, resultChan chan<- OrderResult, wg *sync.WaitGroup) {
+func prepareStandardOrder(order Order, results chan<- OrderResult, slots chan struct{}, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	startTime := time.Now()
-	time.Sleep(prepTime)
+	// Acquire kitchen slot (capacity limit = 2)
+	slots <- struct{}{}
 
-	elapsed := time.Since(startTime)
-	resultChan <- OrderResult{
-		OrderID:  order.OrderID, // Extract the ID directly from the struct
+	fmt.Printf("[START] Order #%d is cooking...\n", order.ID)
+	time.Sleep(order.Duration)
+
+	results <- OrderResult{
+		OrderID:  order.ID,
 		Status:   "READY",
-		PrepTime: elapsed,
+		Duration: order.Duration,
 	}
+
+	<-slots // Release slot
+}
+
+func runVerifyTest(testName string, queue []Order) {
+	fmt.Printf("%s\n", testName)
+
+	if len(queue) == 0 {
+		fmt.Println("Queue is empty. System handled safely without hanging.")
+		return
+	}
+
+	results := make(chan OrderResult, len(queue))
+	slots := make(chan struct{}, 2)
+	var wg sync.WaitGroup
+
+	start := time.Now()
+
+	for _, order := range queue {
+		wg.Add(1)
+		go prepareStandardOrder(order, results, slots, &wg)
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	fmt.Println("Report")
+	for res := range results {
+		fmt.Printf("[DONE] Order #%d %s (Took: %v)\n", res.OrderID, res.Status, res.Duration)
+	}
+
+	fmt.Printf("Total execution time: %v\n", time.Since(start))
+}
+
+// ---------------------------------------------------------------------
+// ADAPT PHASE: PRIORITY DISPATCHER
+// ---------------------------------------------------------------------
+func runAdaptTest(testName string, queue []Order) {
+	fmt.Printf("ADAPT: %s\n", testName)
+
+	// Operational rule: Priority orders jump to the front of available preparation slots
+	sort.SliceStable(queue, func(i, j int) bool {
+		return queue[i].Priority && !queue[j].Priority
+	})
+
+	results := make(chan OrderResult, len(queue))
+	slots := make(chan struct{}, 2)
+	var wg sync.WaitGroup
+
+	start := time.Now()
+
+	for _, order := range queue {
+		wg.Add(1)
+		go func(o Order) {
+			defer wg.Done()
+
+			slots <- struct{}{}
+
+			tag := "Normal"
+			if o.Priority {
+				tag = "PRIORITY"
+			}
+			fmt.Printf("[START] Order #%d (%s) is cooking...\n", o.ID, tag)
+			time.Sleep(o.Duration)
+
+			results <- OrderResult{
+				OrderID:  o.ID,
+				Status:   "READY",
+				Duration: o.Duration,
+			}
+
+			<-slots
+		}(order)
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	fmt.Println("Report")
+	for res := range results {
+		fmt.Printf("[DONE] Order #%d %s (Took: %v)\n", res.OrderID, res.Status, res.Duration)
+	}
+
+	fmt.Printf("Total execution time: %v\n", time.Since(start))
 }
 
 func main() {
-	//==================LAB2=======================//
+	// Test 1: One order
+	runVerifyTest("Test 1 - One Order", []Order{
+		{ID: 101, Items: "Pho", Duration: 300 * time.Millisecond},
+	})
 
-	// 5.1 Step A — Concurrent Order Preparation 5.1.1
-	// doneChan := make(chan string, 3)
+	// Test 2: Five orders
+	runVerifyTest("Test 2 - Five Orders Complete", []Order{
+		{ID: 101, Items: "Pho", Duration: 200 * time.Millisecond},
+		{ID: 102, Items: "Coffee", Duration: 200 * time.Millisecond},
+		{ID: 103, Items: "Banh Mi", Duration: 200 * time.Millisecond},
+		{ID: 104, Items: "Burger", Duration: 200 * time.Millisecond},
+		{ID: 105, Items: "Tea", Duration: 200 * time.Millisecond},
+	})
 
-	// // Run three orders sequentially (one after the other)
-	// // 5.2 Step B — Sequential Order Preparation
-	// prepareOrderSequential("ORD-1001", 3*time.Second) //[cite: 1]
-	// prepareOrderSequential("ORD-1002", 1*time.Second)
-	// prepareOrderSequential("ORD-1003", 2*time.Second)
-	// Create a channel that accepts the new OrderResult struct
-	//5.2 Step B — Concurrent Order Preparation with Channels
-	// resultChan := make(chan OrderResult, 3)
+	// Test 3: Different durations (out of order finish)
+	runVerifyTest("Test 3 - Different Durations", []Order{
+		{ID: 201, Items: "Slow Roast", Duration: 500 * time.Millisecond},
+		{ID: 202, Items: "Quick Drink", Duration: 150 * time.Millisecond},
+		{ID: 203, Items: "Medium Snack", Duration: 300 * time.Millisecond},
+	})
 
-	// // Run concurrent orders (using IDs from your example)
-	// go prepareOrder("101", 500*time.Millisecond, resultChan)
-	// go prepareOrder("102", 200*time.Millisecond, resultChan)
-	// go prepareOrder("103", 300*time.Millisecond, resultChan)
+	// Test 4: Empty queue
+	runVerifyTest("Test 4 - Empty Queue", []Order{})
 
-	// fmt.Println("=== Completed Orders ===")
+	// Test 5: Two active orders (Capacity limit = 2)
+	runVerifyTest("Test 5 - Exactly Two Active Orders", []Order{
+		{ID: 301, Items: "Steak", Duration: 400 * time.Millisecond},
+		{ID: 302, Items: "Soup", Duration: 400 * time.Millisecond},
+	})
 
-	// // Wait and listen for the results
-	// for i := 0; i < 3; i++ {
-	// 	result := <-resultChan
-	// 	fmt.Printf("Order #%s -- %s -- %v\n", result.OrderID, result.Status, result.PrepTime)
-	// }
-	// 5.3 Step C — wait group
+	// Test 6: More than two waiting orders proceed
+	runVerifyTest("Test 6 - Waiting Orders Proceed Sequentially", []Order{
+		{ID: 401, Items: "Dish 1", Duration: 250 * time.Millisecond},
+		{ID: 402, Items: "Dish 2", Duration: 250 * time.Millisecond},
+		{ID: 403, Items: "Waiting Dish 3", Duration: 150 * time.Millisecond},
+		{ID: 404, Items: "Waiting Dish 4", Duration: 150 * time.Millisecond},
+	})
 
-	// resultChan := make(chan OrderResult, 3)
-	// var wg sync.WaitGroup // Initialize the WaitGroup
-
-	// We have 1 order, so add 1 to the WaitGroup counter
-	// wg.Add(3)
-	// 1. Thông báo worker đang chạy (đặt ngay sau khi khởi chạy các goroutine)
-	// fmt.Println("workers are running...")
-	// Pass the memory address of wg (&wg) to each worker
-	// go prepareOrder("101", 500*time.Millisecond, resultChan, &wg)
-	// go prepareOrder("102", 200*time.Millisecond, resultChan, &wg)
-	// go prepareOrder("103", 300*time.Millisecond, resultChan, &wg)
-	// Assuming myOrder is already created
-	// 2. Thông báo tất cả worker đã hoàn thành (vòng lặp channel đã kết thúc)
-
-	// Wait for all workers to finish in the background, then close the channel
-
-	// 5.4
-
-	inventory := setupInventory()
-	listInventory(inventory)
-	myOrder := Order{
-		OrderID:      "ORD-1001",
-		Items:        make(map[string]int),
-		CustomerType: Member,
-		OrderType:    Delivery,
-	}
-	myOrder2 := Order{
-		OrderID:      "ORD-1002",
-		Items:        make(map[string]int),
-		CustomerType: Member,
-		OrderType:    Delivery,
-	}
-	myOrder3 := Order{
-		OrderID:      "ORD-1003",
-		Items:        make(map[string]int),
-		CustomerType: Member,
-		OrderType:    Delivery,
-	}
-	myOrder4 := Order{
-		OrderID:      "ORD-1004",
-		Items:        make(map[string]int),
-		CustomerType: Member,
-		OrderType:    Delivery,
-	}
-	myOrder5 := Order{
-		OrderID:      "ORD-1005",
-		Items:        make(map[string]int),
-		CustomerType: Member,
-		OrderType:    Delivery,
-	}
-
-	orders := []Order{myOrder, myOrder2, myOrder3, myOrder4, myOrder5}
-	resultChan := make(chan OrderResult, len(orders))
-	var wg sync.WaitGroup // Initialize the WaitGroup
-	sem := make(chan struct{}, 2)
-	wg.Add(len(orders)) // Add the number of orders to the WaitGroup counter
-	// fmt.Println("workers are running...")
-
-	for i, o := range orders {
-		go func(o Order, d time.Duration) {
-			sem <- struct{}{}        // acquire (blocks if 2 already running)
-			defer func() { <-sem }() // release
-			prepareOrder(o, d, resultChan, &wg)
-		}(o, time.Duration(200+i*100)*time.Millisecond)
-	}
-
-	jobs := make(chan Order)
-	for w := 0; w < 2; w++ {
-		go func() {
-			for o := range jobs {
-				prepareOrder(o, 300*time.Millisecond, resultChan, &wg)
-			}
-		}()
-	}
-	for _, o := range orders {
-		jobs <- o
-	}
-	close(jobs)
-	go func() {
-		wg.Wait()
-		close(resultChan)
-		fmt.Println("all workers complete")
-	}()
-
-	fmt.Println("=== Completed Orders ===")
-
-	// Read continuously until the channel is closed
-	for result := range resultChan {
-		fmt.Printf("Order #%s -- %s -- %v\n", result.OrderID, result.Status, result.PrepTime)
-	}
-
+	
+	// ADAPT (Priority Orders Test)
+	runAdaptTest("Requirement Change - Priority Customer Preference", []Order{
+		{ID: 501, Items: "Normal Burger", Duration: 300 * time.Millisecond, Priority: false},
+		{ID: 502, Items: "Normal Fries", Duration: 300 * time.Millisecond, Priority: false},
+		{ID: 503, Items: "VIP Combo", Duration: 200 * time.Millisecond, Priority: true}, // PRIORITY
+		{ID: 504, Items: "Normal Drink", Duration: 200 * time.Millisecond, Priority: false},
+	})
 }
