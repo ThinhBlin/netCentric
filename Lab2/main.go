@@ -223,16 +223,32 @@ func prepareOrderSequential(orderID string, prepTime time.Duration) {
 }
 
 // 5.3 Step C — wait group
-// UPDATED: Worker function with sync.WaitGroup
-func prepareOrder(orderID string, prepTime time.Duration, resultChan chan<- OrderResult, wg *sync.WaitGroup) {
-	defer wg.Done() // Signal that this goroutine is complete before exiting
+// // UPDATED: Worker function with sync.WaitGroup
+// func prepareOrder(orderID string, prepTime time.Duration, resultChan chan<- OrderResult, wg *sync.WaitGroup) {
+// 	defer wg.Done() // Signal that this goroutine is complete before exiting
+
+// 	startTime := time.Now()
+// 	time.Sleep(prepTime)
+
+//		elapsed := time.Since(startTime)
+//		resultChan <- OrderResult{
+//			OrderID:  orderID,
+//			Status:   "READY",
+//			PrepTime: elapsed,
+//		}
+//	}
+//
+// 5.4
+// UPDATED: Worker function now accepts the full Order struct
+func prepareOrder(order Order, prepTime time.Duration, resultChan chan<- OrderResult, wg *sync.WaitGroup) {
+	defer wg.Done()
 
 	startTime := time.Now()
 	time.Sleep(prepTime)
 
 	elapsed := time.Since(startTime)
 	resultChan <- OrderResult{
-		OrderID:  orderID,
+		OrderID:  order.OrderID, // Extract the ID directly from the struct
 		Status:   "READY",
 		PrepTime: elapsed,
 	}
@@ -266,21 +282,27 @@ func main() {
 	// 	fmt.Printf("Order #%s -- %s -- %v\n", result.OrderID, result.Status, result.PrepTime)
 	// }
 	// 5.3 Step C — wait group
+
 	resultChan := make(chan OrderResult, 3)
 	var wg sync.WaitGroup // Initialize the WaitGroup
 
 	// We have 3 orders, so add 3 to the WaitGroup counter
 	wg.Add(3)
-
+	// 1. Thông báo worker đang chạy (đặt ngay sau khi khởi chạy các goroutine)
+	fmt.Println("workers are running...")
 	// Pass the memory address of wg (&wg) to each worker
-	go prepareOrder("101", 500*time.Millisecond, resultChan, &wg)
-	go prepareOrder("102", 200*time.Millisecond, resultChan, &wg)
-	go prepareOrder("103", 300*time.Millisecond, resultChan, &wg)
+	// go prepareOrder("101", 500*time.Millisecond, resultChan, &wg)
+	// go prepareOrder("102", 200*time.Millisecond, resultChan, &wg)
+	// go prepareOrder("103", 300*time.Millisecond, resultChan, &wg)
+	// Assuming myOrder is already created
+	go prepareOrder(myOrder, 500*time.Millisecond, resultChan, &wg)
+	// 2. Thông báo tất cả worker đã hoàn thành (vòng lặp channel đã kết thúc)
 
 	// Wait for all workers to finish in the background, then close the channel
 	go func() {
 		wg.Wait()
 		close(resultChan)
+		fmt.Println("all workers complete")
 	}()
 
 	fmt.Println("=== Completed Orders ===")
