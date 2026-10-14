@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -126,6 +127,71 @@ func runAdaptTest(testName string, queue []Order) {
 	fmt.Printf("Total execution time: %v\n", time.Since(start))
 }
 
+const (
+	Waiting   int32 = iota // in queue, not yet cooking
+	Active                 // cooking, can no longer be cancelled
+	Cancelled              // cancelled while waiting
+)
+
+func runCancelTest(testName string, queue []Order, cancelIDs []int, cancelAfter time.Duration) {
+	fmt.Printf("CANCEL: %s\n", testName)
+
+	// one state per order
+	states := make(map[int]*int32)
+	for _, o := range queue {
+		s := Waiting
+		states[o.ID] = &s
+	}
+
+	results := make(chan OrderResult, len(queue))
+	slots := make(chan struct{}, 2)
+	var wg sync.WaitGroup
+	start := time.Now()
+
+	for _, order := range queue {
+		wg.Add(1)
+		go func(o Order, state *int32) {
+			defer wg.Done()
+
+			slots <- struct{}{} // wait for a kitchen slot
+			defer func() { <-slots }()
+
+			// The gate: Waiting -> Active. Fails if the order was cancelled.
+			if !atomic.CompareAndSwapInt32(state, Waiting, Active) {
+				results <- OrderResult{OrderID: o.ID, Status: "CANCELLED"}
+				return // never reaches the cooking code
+			}
+
+			fmt.Printf("[START] Order #%d is cooking...\n", o.ID)
+			time.Sleep(o.Duration)
+			results <- OrderResult{OrderID: o.ID, Status: "READY", Duration: o.Duration}
+		}(order, states[order.ID])
+	}
+
+	// Customer cancels after a delay
+	go func() {
+		time.Sleep(cancelAfter)
+		for _, id := range cancelIDs {
+			if atomic.CompareAndSwapInt32(states[id], Waiting, Cancelled) {
+				fmt.Printf("[CANCEL] Order #%d cancelled\n", id)
+			} else {
+				fmt.Printf("[REJECTED] Order #%d already cooking, cannot cancel\n", id)
+			}
+		}
+	}()
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	fmt.Println("Report")
+	for res := range results {
+		fmt.Printf("[DONE] Order #%d %s (Took: %v)\n", res.OrderID, res.Status, res.Duration)
+	}
+	fmt.Printf("Total execution time: %v\n", time.Since(start))
+}
+
 func main() {
 	// Test 1: One order
 	runVerifyTest("Test 1 - One Order", []Order{
@@ -165,7 +231,6 @@ func main() {
 		{ID: 404, Items: "Waiting Dish 4", Duration: 150 * time.Millisecond},
 	})
 
-	
 	// ADAPT (Priority Orders Test)
 	runAdaptTest("Requirement Change - Priority Customer Preference", []Order{
 		{ID: 501, Items: "Normal Burger", Duration: 300 * time.Millisecond, Priority: false},
@@ -173,4 +238,10 @@ func main() {
 		{ID: 503, Items: "VIP Combo", Duration: 200 * time.Millisecond, Priority: true}, // PRIORITY
 		{ID: 504, Items: "Normal Drink", Duration: 200 * time.Millisecond, Priority: false},
 	})
+	runCancelTest("Cancel waiting vs active order", []Order{
+		{ID: 601, Items: "Burger", Duration: 300 * time.Millisecond},
+		{ID: 602, Items: "Fries", Duration: 300 * time.Millisecond},
+		{ID: 603, Items: "Soup", Duration: 200 * time.Millisecond},
+		{ID: 604, Items: "Drink", Duration: 200 * time.Millisecond},
+	}, []int{601, 603}, 100*time.Millisecond)
 }
