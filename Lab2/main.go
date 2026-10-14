@@ -2,62 +2,97 @@ package main
 
 import (
 	"fmt"
-	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
-// Order defines the structure for all kitchen orders
+const (
+	StatusWaiting   = "WAITING"
+	StatusPreparing = "PREPARING"
+	StatusCancelled = "CANCELLED"
+	StatusReady     = "READY"
+)
+
 type Order struct {
 	ID       int
 	Items    string
 	Duration time.Duration
-	Priority bool // Used in the ADAPT Phase
+	Status   string
+	mu       *sync.Mutex
 }
 
-// OrderResult defines the result sent through the channel back to main
 type OrderResult struct {
 	OrderID  int
 	Status   string
 	Duration time.Duration
 }
 
-func prepareStandardOrder(order Order, results chan<- OrderResult, slots chan struct{}, wg *sync.WaitGroup) {
+func CancelOrder(order *Order) bool {
+	order.mu.Lock()
+	defer order.mu.Unlock()
+
+	// An order can only be cancelled if it is still waiting
+	if order.Status == StatusWaiting {
+		order.Status = StatusCancelled
+		return true
+	}
+	return false
+}
+
+func prepareOrder(order *Order, results chan<- OrderResult, slots chan struct{}, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	// Acquire kitchen slot (capacity limit = 2)
+	// Wait for an available kitchen slot
 	slots <- struct{}{}
+
+	// Check if the order was cancelled while waiting
+	order.mu.Lock()
+	if order.Status == StatusCancelled {
+		order.mu.Unlock()
+		<-slots // Release the slot immediately
+
+		// Report the cancellation back to the main thread
+		results <- OrderResult{OrderID: order.ID, Status: StatusCancelled, Duration: 0}
+		return // Order is never delivered to the active kitchen worker
+	}
+	// If not cancelled, mark as preparing
+	order.Status = StatusPreparing
+	order.mu.Unlock()
 
 	fmt.Printf("[START] Order #%d is cooking...\n", order.ID)
 	time.Sleep(order.Duration)
 
+	order.mu.Lock()
+	order.Status = StatusReady
+	order.mu.Unlock()
+
 	results <- OrderResult{
 		OrderID:  order.ID,
-		Status:   "READY",
+		Status:   StatusReady,
 		Duration: order.Duration,
 	}
 
 	<-slots // Release slot
 }
 
-func runVerifyTest(testName string, queue []Order) {
-	fmt.Printf("%s\n", testName)
-
-	if len(queue) == 0 {
-		fmt.Println("Queue is empty. System handled safely without hanging.")
-		return
-	}
+func runCancelTest(testName string, queue []*Order, cancelFunc func()) {
+	fmt.Printf("\n%s\n", testName)
 
 	results := make(chan OrderResult, len(queue))
-	slots := make(chan struct{}, 2)
+	slots := make(chan struct{}, 2) // Kitchen capacity = 2
 	var wg sync.WaitGroup
 
 	start := time.Now()
 
+	// Dispatch orders
 	for _, order := range queue {
 		wg.Add(1)
-		go prepareStandardOrder(order, results, slots, &wg)
+		go prepareOrder(order, results, slots, &wg)
+	}
+
+	// Execute the specific cancellation logic for this test
+	if cancelFunc != nil {
+		cancelFunc()
 	}
 
 	go func() {
@@ -67,181 +102,66 @@ func runVerifyTest(testName string, queue []Order) {
 
 	fmt.Println("Report")
 	for res := range results {
-		fmt.Printf("[DONE] Order #%d %s (Took: %v)\n", res.OrderID, res.Status, res.Duration)
+		fmt.Printf("[DONE] Order #%d %s\n", res.OrderID, res.Status)
 	}
 
-	fmt.Printf("Total execution time: %v\n", time.Since(start))
-}
-
-// ---------------------------------------------------------------------
-// ADAPT PHASE: PRIORITY DISPATCHER
-// ---------------------------------------------------------------------
-func runAdaptTest(testName string, queue []Order) {
-	fmt.Printf("ADAPT: %s\n", testName)
-
-	// Operational rule: Priority orders jump to the front of available preparation slots
-	sort.SliceStable(queue, func(i, j int) bool {
-		return queue[i].Priority && !queue[j].Priority
-	})
-
-	results := make(chan OrderResult, len(queue))
-	slots := make(chan struct{}, 2)
-	var wg sync.WaitGroup
-
-	start := time.Now()
-
-	for _, order := range queue {
-		wg.Add(1)
-		go func(o Order) {
-			defer wg.Done()
-
-			slots <- struct{}{}
-
-			tag := "Normal"
-			if o.Priority {
-				tag = "PRIORITY"
-			}
-			fmt.Printf("[START] Order #%d (%s) is cooking...\n", o.ID, tag)
-			time.Sleep(o.Duration)
-
-			results <- OrderResult{
-				OrderID:  o.ID,
-				Status:   "READY",
-				Duration: o.Duration,
-			}
-
-			<-slots
-		}(order)
-	}
-
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	fmt.Println("Report")
-	for res := range results {
-		fmt.Printf("[DONE] Order #%d %s (Took: %v)\n", res.OrderID, res.Status, res.Duration)
-	}
-
-	fmt.Printf("Total execution time: %v\n", time.Since(start))
-}
-
-const (
-	Waiting   int32 = iota // in queue, not yet cooking
-	Active                 // cooking, can no longer be cancelled
-	Cancelled              // cancelled while waiting
-)
-
-func runCancelTest(testName string, queue []Order, cancelIDs []int, cancelAfter time.Duration) {
-	fmt.Printf("CANCEL: %s\n", testName)
-
-	// one state per order
-	states := make(map[int]*int32)
-	for _, o := range queue {
-		s := Waiting
-		states[o.ID] = &s
-	}
-
-	results := make(chan OrderResult, len(queue))
-	slots := make(chan struct{}, 2)
-	var wg sync.WaitGroup
-	start := time.Now()
-
-	for _, order := range queue {
-		wg.Add(1)
-		go func(o Order, state *int32) {
-			defer wg.Done()
-
-			slots <- struct{}{} // wait for a kitchen slot
-			defer func() { <-slots }()
-
-			// The gate: Waiting -> Active. Fails if the order was cancelled.
-			if !atomic.CompareAndSwapInt32(state, Waiting, Active) {
-				results <- OrderResult{OrderID: o.ID, Status: "CANCELLED"}
-				return // never reaches the cooking code
-			}
-
-			fmt.Printf("[START] Order #%d is cooking...\n", o.ID)
-			time.Sleep(o.Duration)
-			results <- OrderResult{OrderID: o.ID, Status: "READY", Duration: o.Duration}
-		}(order, states[order.ID])
-	}
-
-	// Customer cancels after a delay
-	go func() {
-		time.Sleep(cancelAfter)
-		for _, id := range cancelIDs {
-			if atomic.CompareAndSwapInt32(states[id], Waiting, Cancelled) {
-				fmt.Printf("[CANCEL] Order #%d cancelled\n", id)
-			} else {
-				fmt.Printf("[REJECTED] Order #%d already cooking, cannot cancel\n", id)
-			}
-		}
-	}()
-
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	fmt.Println("Report")
-	for res := range results {
-		fmt.Printf("[DONE] Order #%d %s (Took: %v)\n", res.OrderID, res.Status, res.Duration)
-	}
 	fmt.Printf("Total execution time: %v\n", time.Since(start))
 }
 
 func main() {
-	// Test 1: One order
-	runVerifyTest("Test 1 - One Order", []Order{
-		{ID: 101, Items: "Pho", Duration: 300 * time.Millisecond},
+	// Test 1: Normal execution (No cancellations)
+	runCancelTest("Test 1: Normal Execution", []*Order{
+		{ID: 101, Items: "Pho", Duration: 200 * time.Millisecond, Status: StatusWaiting, mu: &sync.Mutex{}},
+	}, nil)
+
+	// Test 2: Cancel before preparation
+	order2 := &Order{ID: 102, Items: "Burger", Duration: 300 * time.Millisecond, Status: StatusWaiting, mu: &sync.Mutex{}}
+	runCancelTest("Test 2: Cancel Before Preparation", []*Order{order2}, func() {
+		if CancelOrder(order2) {
+			fmt.Println("-> Successfully cancelled Order #102")
+		}
 	})
 
-	// Test 2: Five orders
-	runVerifyTest("Test 2 - Five Orders Complete", []Order{
-		{ID: 101, Items: "Pho", Duration: 200 * time.Millisecond},
-		{ID: 102, Items: "Coffee", Duration: 200 * time.Millisecond},
-		{ID: 103, Items: "Banh Mi", Duration: 200 * time.Millisecond},
-		{ID: 104, Items: "Burger", Duration: 200 * time.Millisecond},
-		{ID: 105, Items: "Tea", Duration: 200 * time.Millisecond},
+	// Test 3: Cancel an active order (Should Fail)
+	order3 := &Order{ID: 103, Items: "Steak", Duration: 400 * time.Millisecond, Status: StatusWaiting, mu: &sync.Mutex{}}
+	runCancelTest("Test 3: Cancel Active Order", []*Order{order3}, func() {
+		time.Sleep(100 * time.Millisecond) // Let it enter PREPARING state
+		if !CancelOrder(order3) {
+			fmt.Println("-> Failed to cancel Order #103 (Already preparing)")
+		}
 	})
 
-	// Test 3: Different durations (out of order finish)
-	runVerifyTest("Test 3 - Different Durations", []Order{
-		{ID: 201, Items: "Slow Roast", Duration: 500 * time.Millisecond},
-		{ID: 202, Items: "Quick Drink", Duration: 150 * time.Millisecond},
-		{ID: 203, Items: "Medium Snack", Duration: 300 * time.Millisecond},
+	// Test 4: Cancel an already completed order (Should Fail)
+	order4 := &Order{ID: 104, Items: "Coffee", Duration: 100 * time.Millisecond, Status: StatusWaiting, mu: &sync.Mutex{}}
+	runCancelTest("Test 4: Cancel Completed Order", []*Order{order4}, func() {
+		time.Sleep(200 * time.Millisecond) // Let it finish completely
+		if !CancelOrder(order4) {
+			fmt.Println("-> Failed to cancel Order #104 (Already completed)")
+		}
 	})
 
-	// Test 4: Empty queue
-	runVerifyTest("Test 4 - Empty Queue", []Order{})
+	// Test 5: Complex queue with multiple waiting cancellations
+	o601 := &Order{ID: 601, Items: "Pho", Duration: 500 * time.Millisecond, Status: StatusWaiting, mu: &sync.Mutex{}}
+	o602 := &Order{ID: 602, Items: "Banh Mi", Duration: 500 * time.Millisecond, Status: StatusWaiting, mu: &sync.Mutex{}}
+	o603 := &Order{ID: 603, Items: "Coffee", Duration: 200 * time.Millisecond, Status: StatusWaiting, mu: &sync.Mutex{}}
+	o604 := &Order{ID: 604, Items: "Burger", Duration: 200 * time.Millisecond, Status: StatusWaiting, mu: &sync.Mutex{}}
+	o605 := &Order{ID: 605, Items: "Tea", Duration: 200 * time.Millisecond, Status: StatusWaiting, mu: &sync.Mutex{}}
+	
+	runCancelTest("TEST 5: Queue with Orders #601 - #605", []*Order{o601, o602, o603, o604, o605}, func() {
+		// Wait 50ms so workers take 601 and 602 into the 2 kitchen slots
+		time.Sleep(50 * time.Millisecond)
 
-	// Test 5: Two active orders (Capacity limit = 2)
-	runVerifyTest("Test 5 - Exactly Two Active Orders", []Order{
-		{ID: 301, Items: "Steak", Duration: 400 * time.Millisecond},
-		{ID: 302, Items: "Soup", Duration: 400 * time.Millisecond},
-	})
+		// Try to cancel 601 (Should fail because it is already cooking)
+		if !CancelOrder(o601) {
+			fmt.Println("-> Cannot cancel Order #601: already in cooking process!")
+		}
 
-	// Test 6: More than two waiting orders proceed
-	runVerifyTest("Test 6 - Waiting Orders Proceed Sequentially", []Order{
-		{ID: 401, Items: "Dish 1", Duration: 250 * time.Millisecond},
-		{ID: 402, Items: "Dish 2", Duration: 250 * time.Millisecond},
-		{ID: 403, Items: "Waiting Dish 3", Duration: 150 * time.Millisecond},
-		{ID: 404, Items: "Waiting Dish 4", Duration: 150 * time.Millisecond},
+		// Cancel 603 and 605 (Should succeed because slots are full and workers haven't taken them yet)
+		if CancelOrder(o603) {
+			fmt.Println("-> Successfully canceled waiting Order #603")
+		}
+		if CancelOrder(o605) {
+			fmt.Println("-> Successfully canceled waiting Order #605")
+		}
 	})
-
-	// ADAPT (Priority Orders Test)
-	runAdaptTest("Requirement Change - Priority Customer Preference", []Order{
-		{ID: 501, Items: "Normal Burger", Duration: 300 * time.Millisecond, Priority: false},
-		{ID: 502, Items: "Normal Fries", Duration: 300 * time.Millisecond, Priority: false},
-		{ID: 503, Items: "VIP Combo", Duration: 200 * time.Millisecond, Priority: true}, // PRIORITY
-		{ID: 504, Items: "Normal Drink", Duration: 200 * time.Millisecond, Priority: false},
-	})
-	runCancelTest("Cancel waiting vs active order", []Order{
-		{ID: 601, Items: "Burger", Duration: 300 * time.Millisecond},
-		{ID: 602, Items: "Fries", Duration: 300 * time.Millisecond},
-		{ID: 603, Items: "Soup", Duration: 200 * time.Millisecond},
-		{ID: 604, Items: "Drink", Duration: 200 * time.Millisecond},
-	}, []int{601, 603}, 100*time.Millisecond)
 }
