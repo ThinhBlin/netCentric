@@ -303,38 +303,40 @@ func main() {
 
 	inventory := setupInventory()
 	listInventory(inventory)
-	myOrder := Order{
-		OrderID:      "ORD-1001",
-		Items:        make(map[string]int),
-		CustomerType: Member,
-		OrderType:    Delivery,
-	}
-	myOrder2 := Order{
-		OrderID:      "ORD-1002",
-		Items:        make(map[string]int),
-		CustomerType: Member,
-		OrderType:    Delivery,
-	}
-	myOrder3 := Order{
-		OrderID:      "ORD-1003",
-		Items:        make(map[string]int),
-		CustomerType: Member,
-		OrderType:    Delivery,
-	}
-	myOrder4 := Order{
-		OrderID:      "ORD-1004",
-		Items:        make(map[string]int),
-		CustomerType: Member,
-		OrderType:    Delivery,
-	}
-	myOrder5 := Order{
-		OrderID:      "ORD-1005",
-		Items:        make(map[string]int),
-		CustomerType: Member,
-		OrderType:    Delivery,
-	}
+	// myOrder := Order{
+	// 	OrderID:      "ORD-1001",
+	// 	Items:        make(map[string]int),
+	// 	CustomerType: Member,
+	// 	OrderType:    Delivery,
+	// }
+	// myOrder2 := Order{
+	// 	OrderID:      "ORD-1002",
+	// 	Items:        make(map[string]int),
+	// 	CustomerType: Member,
+	// 	OrderType:    Delivery,
+	// }
+	// myOrder3 := Order{
+	// 	OrderID:      "ORD-1003",
+	// 	Items:        make(map[string]int),
+	// 	CustomerType: Member,
+	// 	OrderType:    Delivery,
+	// }
+	// myOrder4 := Order{
+	// 	OrderID:      "ORD-1004",
+	// 	Items:        make(map[string]int),
+	// 	CustomerType: Member,
+	// 	OrderType:    Delivery,
+	// }
+	// myOrder5 := Order{
+	// 	OrderID:      "ORD-1005",
+	// 	Items:        make(map[string]int),
+	// 	CustomerType: Member,
+	// 	OrderType:    Delivery,
+	// }
 
-	orders := []Order{myOrder, myOrder2, myOrder3, myOrder4, myOrder5}
+	// orders := []Order{myOrder, myOrder2, myOrder3, myOrder4, myOrder5}
+	orders := []Order{}
+
 	resultChan := make(chan OrderResult, len(orders))
 	var wg sync.WaitGroup // Initialize the WaitGroup
 	sem := make(chan struct{}, 2)
