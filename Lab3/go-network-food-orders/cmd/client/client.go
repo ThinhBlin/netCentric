@@ -20,9 +20,9 @@ func main() {
 
 	// 2 & 3. Two valid orders and one invalid order on the same connection
 	orders := []string{
-		"ORD-101,Pho,2",        // Valid order 1
-		"ORD-102,BanhMi,1",     // Valid order 2
-		"ORD-103,Coffee,wrong", // Invalid order (bad quantity)
+		"ORD-101,Pho,2",     // Valid order 1
+		"ORD-102,BanhMi,1",  // Valid order 2
+		"ORD-103,Coffee,-1", // Invalid order (bad quantity)
 	}
 
 	for _, order := range orders {
