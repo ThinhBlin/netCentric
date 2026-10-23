@@ -1,0 +1,32 @@
+[
+  {
+    "source": "books",
+    "kind": "book",
+    "title": "The Go Handbook",
+    "price": "£12.50"
+  },
+  {
+    "source": "books",
+    "kind": "book",
+    "title": "Networking Basics",
+    "price": "£25.00"
+  },
+  {
+    "source": "books",
+    "kind": "book",
+    "title": "Reliable Systems",
+    "price": "£30.00"
+  },
+  {
+    "source": "movies",
+    "kind": "movie",
+    "title": "Inception",
+    "rating": 8.4
+  },
+  {
+    "source": "movies",
+    "kind": "movie",
+    "title": "Avatar",
+    "rating": 7.5
+  }
+]
